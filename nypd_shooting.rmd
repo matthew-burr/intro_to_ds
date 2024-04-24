@@ -2,7 +2,9 @@
 editor_options:
   markdown:
     wrap: 72
-output: pdf_document
+output:
+  html_document:
+    df_print: paged
 ---
 # Introduction
 The central question I will look at is "How have NYPD shooting incidents trended over time?" I will look at how they have increased or decreased, and whether those patterns hold across NYC's five boroughs.
@@ -20,8 +22,9 @@ nypd_shootings_raw = read_csv(url)
 
 # Tidy
 
-Now we'll do some cleanup: - Changing variable types - Getting rid of
-unneeded columns
+Now we'll do some cleanup: 
+- Changing variable types 
+- Getting rid of unneeded columns
 
 ```{r tidy}
 nypd_shootings_tidy <-
@@ -77,8 +80,10 @@ nypd_shootings_tidy %>%
   theme_minimal()
 ```
 
-We'll also break this out by Borough to see how they compare to one
-another:
+## Observations
+Looking at this data, we can see that shootings have been declining, in general, since 2006, reaching their lowest point in 2018. But there was a sharp increase in 2020, with incidents returning to levels last seen in 2006.
+
+Let's break this out by Borough to see how they compare to one another:
 
 ```{r boro_time_series}
 nypd_shootings_tidy %>%
@@ -92,6 +97,14 @@ nypd_shootings_tidy %>%
   scale_x_date(date_minor_breaks = "1 years") +
   theme_minimal()
 ```
+
+## Observations
+We can see that this pattern is consistent across the boroughs with the notable exception of Staten Island, where incidents are low and have remained fairly consistent. We can see that in Brooklyn and Queens, shootings reached a resurgent peak in 2020. Manhattan and the Bronx reached their resurgent peak in 2021. 
+
+Since then, shootings are starting to decline again, although they have yet to return to the low levels we saw in 2018. 
+
+Let's next take a closer look at the trends borough by borough to see if we can glean any further insight. Will break the data out into facets, by borough, look at the data at a monthly level, and apply some smoothing to see if any patterns emerge.
+
 ```{r faceted_time_series}
 nypd_shootings_tidy %>% 
   mutate(occur_month = trunc.Date(OCCUR_DATE, "months")) %>% 
@@ -104,6 +117,14 @@ nypd_shootings_tidy %>%
   scale_x_date(date_minor_breaks = "1 years") + 
   theme_minimal()
 ```
+
+## Observations
+An interesting point that becomes apparent as we look more closely at the data is that there is some seasonality to shootings. Within any given year, shootings tend to peak toward the middle of the year and then drop off at during the winter. As we look at each individual borough there are some interesting points.
+
+- Brooklyn spiked very quickly and briefly in 2020, and then dropped back to more regular patterns similar to levels seen in 2015
+- Both the Bronx and Manhattan rose quickly in 2020, but unlike Brooklyn, they have remained at sustained levels (although, the Bronx is returning to lower levels more recently). Further, the seasonal drop-off seen in previous years, while still existent, seems not to come down quite as much. 
+- Queens shows signs of greater volatility with shootings reaching higher peaks than even in 2006, but coming down to more reasonable levels in the "off-season".
+
 # Analysis
 
 From the year 2000 to 2020, shooting incidents had generally decreased,
@@ -117,12 +138,16 @@ shootings with a return to 2000 levels in 2020. But Manhattan and the
 Bronx are somewhat different. They rose to higher levels than the year
 2000. Furthermore, they hit their peaks a year later, in 2021.
 
-This begs some questions: \* Is COVID-19 to blame for the increase in
-shootings in 2020 and 2021? \* If so, was there some difference in
+This begs some questions: 
+- Is COVID-19 to blame for the increase in
+shootings in 2020 and 2021? 
+- If so, was there some difference in
 timing with respect to how COVID-19 affected Manhattan and Bronx vs.
 Brooklyn and Queens that might account for the delayed increase in
-shooting incidents in the latter? \* If COVID-19 *is* to blame, in what
-way? Were there changes in policing policy? \* Were there other
+shooting incidents in the latter? 
+- If COVID-19 *is* to blame, in what
+way? Were there changes in policing policy? 
+- Were there other
 significant events that occurred around 2020-2021 that might account for
 the upticks: changes in policing laws, changes in government leadership,
 etc.?
