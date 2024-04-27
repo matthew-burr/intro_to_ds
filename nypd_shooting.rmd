@@ -1,5 +1,5 @@
 ---
-title: "COVID-19 Analysis"
+title: "Trends in NYPD Shooting Incidents Over Time"
 author: "Matt Burr"
 date: "`r Sys.Date()`"
 output:
