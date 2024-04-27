@@ -1,0 +1,537 @@
+---
+title: "COVID-19 Analysis"
+author: "Matt Burr"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Introduction
+For this assignment, I will look at COVID-19 data from Johns Hopkins. This is the same data used in lectures earlier in the course, and I will follow much of the same framework for ingesting, tidying, and analyzing this data.
+
+In addition to the questions and analyses considered in the lectures, I want to look at the role a nation's wealth plays in the COVID-19 "experience." The central question I want to address is "is there a correlation between the wealth of a nation and the number of cases & deaths it experienced as a result of COVID?"
+
+For source data, I will draw on three key sources:
+
+- The aforementioned Johns Hopkins data on COVID cases and deaths
+- Population and lookup data also provided at the same repository (to normalize data and map data to GDP)
+- GDP data, as an indicator of national wealth, from the World Bank (https://databank.worldbank.org/reports.aspx?dsid=2&series=NY.GDP.MKTP.CD); this is GDP for various nations of the world, expressed in current US $.
+
+# Replicating Previous Analysis
+At the outset, I will follow the same steps as were demonstrated in the video lectures. This analysis focuses mostly on the U.S. and the question: for U.S. states, does the number of COVID19 cases predict the number of COVID19 deaths?
+
+## Data Ingestion and Prep
+```{r setup, echo=FALSE, message=FALSE}
+library(tidyverse)
+```
+
+We begin by ingesting the COVID19 data from John's Hopkins.
+```{r ingest_cases, message=FALSE}
+
+base_url <-
+  "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+files <-
+  c(
+    "time_series_covid19_confirmed_US.csv",
+    "time_series_covid19_confirmed_global.csv",
+    "time_series_covid19_deaths_US.csv",
+    "time_series_covid19_deaths_global.csv"
+  )
+
+urls <- str_c(base_url, files)
+
+us_cases <- read_csv(urls[1])
+global_cases <- read_csv(urls[2])
+us_deaths <- read_csv(urls[3])
+global_deaths <- read_csv(urls[4])
+
+```
+
+Next, we'll tidy up the global data.
+```{r tidy_up_cases_and_deaths}
+global_cases <- global_cases %>% select(-c(Lat, Long)) %>% pivot_longer(-c(`Province/State`, `Country/Region`),
+                                                        names_to = "date",
+                                                        values_to = "cases") 
+
+global_deaths <- global_deaths %>% select(-c(Lat, Long)) %>% pivot_longer(-c(`Province/State`, `Country/Region`),
+                                                        names_to = "date",
+                                                        values_to = "deaths") 
+
+head(global_cases)
+head(global_deaths)
+```
+And we'll combine cases and deaths into a single set.
+```{r combine_data, message=FALSE}
+global <-
+  global_cases %>% full_join(global_deaths) %>% rename(Country_Region = `Country/Region`, Province_State = `Province/State`) %>% mutate(date = mdy(date)) %>% filter(cases > 0)
+
+global %>% summary()
+```
+We'll then turn our focus to the US data, similarly pivoting it and creating a single US data set.
+```{r inspect_data, message=FALSE}
+us_cases <-
+  us_cases %>% pivot_longer(-c(UID:Combined_Key),
+                            names_to = "date",
+                            values_to = "cases") %>% select(Admin2:cases) %>% mutate(date = mdy(date)) %>% select(-c(Lat, Long_))
+
+us_cases
+
+us_deaths <- us_deaths %>% pivot_longer(-c(UID:Population),
+                           names_to = "date",
+                           values_to = "deaths") %>% select(Admin2:deaths) %>% mutate(date = mdy(date)) %>% select(-c(Lat, Long_))
+
+us_deaths
+
+US <- us_cases %>% full_join(us_deaths)
+
+US
+```
+
+Now, as in the video, we'll adjust the global data set so that it is similar to the US data set by adding in a `Combined_Key` column and population data. We'll start by grabbing the population data that we know we'll need.
+
+```{r ingest_population, message=FALSE}
+population <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv") 
+
+population
+```
+And then we'll make our adjustments to global. 
+
+Of special note: I will deviate slightly here; I'm keeping the `iso3` column and renaming it to `Country_Code` because this will prove useful later on when I bring in the GDP data that I will use for my own analysis.
+
+```{r update_global_data, message=FALSE}
+global <- global %>% unite(
+  "Combined_Key",
+  c(Province_State, Country_Region),
+  sep = ", ",
+  remove = FALSE,
+  na.rm = TRUE,
+)
+
+global
+
+global <- global %>% 
+  left_join(
+    population,
+    by = c("Province_State", "Country_Region", "Combined_Key"),
+  ) %>%
+  select(Province_State, Country_Region, date, cases, deaths, iso3, Population, Combined_Key) %>% 
+  rename(Country_Code = iso3)
+
+global
+```
+
+
+## Analysis
+We'll not turn to analyzing the data.
+
+We'll continue to follow the video lecture's procedure. We'll analyze the data, particularly the US data, by visualizing it, analyzing it, and modeling it.
+
+We begin by summarizing the US data by state.
+
+```{r us_by_state}
+US_by_state <- US %>% 
+  group_by(Province_State, Country_Region, date) %>% 
+  summarise(across(c(cases, deaths, Population), sum)) %>% 
+  mutate(deaths_per_mill = deaths * 1000000 / Population) %>% 
+  select(Province_State, Country_Region, date, cases, deaths, deaths_per_mill, Population) %>% 
+  ungroup()
+
+US_by_state
+
+```
+Next, we'll calculate US totals by following a similar procedure.
+
+```{r us_totals}
+US_totals <- US_by_state %>% 
+  group_by(Country_Region, date) %>% 
+  summarise(across(c(cases, deaths, Population), sum)) %>% 
+  mutate(deaths_per_mill = deaths * 1000000 / Population) %>% 
+  select(Country_Region, date, cases, deaths, deaths_per_mill, Population) %>% 
+  ungroup()
+
+US_totals
+
+US_totals %>% tail()
+
+```
+And now, we'll proceed to visualization. First, for the country as a whole.
+
+```{r visualize_us_data}
+US_totals %>% 
+  filter(cases > 0) %>% 
+  ggplot(aes(date, cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y = deaths, color = "deaths")) +
+  scale_y_log10() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 90),
+  ) +
+  labs(
+    title = "COVID19 in US",
+    y = NULL,
+  )
+
+```
+Next, for an individual state: Washington (where I live).
+
+```{r visualize_washington_data, warning=FALSE}
+
+US_state <- "Washington"
+
+US_by_state %>% 
+  filter(Province_State == US_state) %>% 
+  filter(cases > 0) %>% 
+  ggplot(aes(date, cases)) +
+  geom_line(aes(color = "cases")) + 
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color="deaths")) +
+  geom_point(aes(y = deaths, color="deaths")) +
+  scale_y_log10() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 90),
+  ) %>% 
+  labs(
+    title = str_c("COVID19 in ", US_state),
+    y = NULL,
+  )
+```
+
+In the video lecture, the question was posed: are cases leveling off? At the time (2021), it looked like it, but looking at our graphs above, we can see that cases did continue to increase. Still, in more recent data, it does appear that cases are leveling off a bit, so we'll perform the same analysis as in the video to see if that is true.
+
+```{r are_cases_leveling_off}
+US_by_state <- US_by_state %>% 
+  mutate(
+    new_cases = cases - lag(cases),
+    new_deaths = deaths - lag(deaths),
+  )
+
+US_totals <- US_totals %>% 
+  mutate(
+    new_cases = cases - lag(cases),
+    new_deaths = deaths - lag(deaths),
+  )
+
+tail(US_totals) %>% select(new_cases, new_deaths, everything())
+```
+I'll point out that, interestingly, we see cases & deaths decreasing on some days. Likely, this was an adjustment in the data previously collected as opposed to people resurrecting ;-) .
+
+We'll proceed to visualize this data next.
+
+```{r visualize_new_data, message=FALSE, warning=FALSE}
+US_totals %>% 
+  filter(cases > 0) %>% 
+  ggplot(aes(date, new_cases)) +
+  geom_line(aes(color = "new_cases")) +
+  geom_point(aes(color = "new_cases")) +
+  geom_line(aes(y = new_deaths, color = "new_deaths")) +
+  geom_point(aes(y = new_deaths, color = "new_deaths")) +
+  scale_y_log10() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 90),
+  ) +
+  labs(
+    title = "COVID19 in US",
+    y = NULL,
+  )
+```
+Time has progressed beyond the video. it's interesting to see a couple of things. First, there have definitely been periods of decline in the number of cases and deaths. Second, as of 2023, cases/deaths have generally slowed down. And third, there is much more volatility day-to-day in the numbers. 
+
+On this last point, I think it is suspicious to see that much volatility. I am inclined to think there have been some changes in reporting standards. Perhaps some states report their numbers only weekly, for example, while others report daily.
+
+In any case, we'll continue to follow the lecture.
+
+Let's look just at Washington and see how it looks.
+
+```{r visualize_new_data_for_washington, warning=FALSE}
+
+US_state <- "Washington"
+
+US_by_state %>% 
+  filter(Province_State == US_state) %>% 
+  filter(new_cases > 0) %>% 
+  ggplot(aes(date, new_cases)) +
+  geom_line(aes(color = "new_cases")) + 
+  geom_point(aes(color = "new_cases")) +
+  geom_line(aes(y = new_deaths, color="new_deaths")) +
+  geom_point(aes(y = new_deaths, color="new_deaths")) +
+  scale_y_log10() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 90),
+  ) %>% 
+  labs(
+    title = str_c("COVID19 in ", US_state),
+    y = NULL,
+  )
+
+```
+There's quite a bit of volatility in that chart. This is especially true in the first half of 2021. But if we look at overall trends, we can see that after 2021, the number of daily new cases/deaths rose back up a bit, especially at the start of 2022, and has remained fairly steady since then.
+
+Let's see how the states compare, as in the video.
+
+```{r state_comparison}
+US_state_totals <- US_by_state %>% 
+  group_by(Province_State) %>% 
+  summarise(
+    across(c(cases, deaths, Population), max),
+    cases_per_thou = 1000 * cases / Population,
+    deaths_per_thou = 1000 * deaths / Population,
+  ) %>% 
+  filter(
+    cases > 0,
+    Population > 0,
+  ) %>% 
+  ungroup()
+
+US_state_totals %>% slice_min(deaths_per_thou, n = 10)
+US_state_totals %>% slice_max(deaths_per_thou, n = 10)
+```
+
+## Modeling
+In this next phase, we'll proceed to some modeling along the lines in the video. We start by looking at the deaths per thousand as a function of the cases per thousand.
+
+```{r model_deaths_v_cases}
+mod <- lm(deaths_per_thou ~ cases_per_thou, data = US_state_totals)
+summary(mod)
+
+US_tot_w_pred <- US_state_totals %>% mutate(pred = predict(mod))
+US_tot_w_pred
+
+US_tot_w_pred %>% 
+  ggplot() +
+  geom_point(
+    aes(
+      x = cases_per_thou, 
+      y = deaths_per_thou,
+    ),
+    color = "blue",
+  ) +
+  geom_point(
+    aes(
+      x = cases_per_thou,
+      y = pred,
+    ),
+    color = "red",
+  )
+```
+Since the time of the video, the data has changed notably. In the video, it looked like areas with a lower number of cases tended to follow the predicted trend very well. Since then, that is no longer the cases. It does appear to be true that more cases per thousand means more deaths per thousand, but there is clearly more at play than a straight linear correlation.
+
+# Looking at Global cases and the role of GDP
+Now, we'll continue by adding some of my own analysis.
+
+For my own analysis, I am curious to understand how a nation's wealth may have played a role in its experience with COVID19. As an indicator of wealth, I will use GDP, obtained from the World Bank's data catalog. This data goes from the early 1960s up through 2023, but it is not collected for all countries every year. And since COVID19 only came onto the world stage in 2020, most of these dates are irrelevant. I will focus just on years covering COVID19, and I'll average GDP for each country over those years.
+
+## Downloading GDP
+As noted, I will use GDP data from the World Bank as an indicator of wealth. World Bank provides this data in a CSV, but that CSV is combined into a Zip file with some Metadata files. The following code downloads the ZIP file, finds the name of the CSV within it (the name changes, I've found), extracts it, ingests it, and then cleans up after itself.
+
+```{r ingest_gdp, message=FALSE}
+download.file("https://api.worldbank.org/v2/en/indicator/NY.GDP.MKTP.CD?downloadformat=csv", destfile="gdp.zip")
+
+# The downloaded file is a Zip with the CSV we want and some metadata files.
+# We'll get the name of the CSV and store it to a variable
+file_list <- unzip("gdp.zip", list=TRUE)
+file_list <- file_list %>% filter(str_starts(`Name`, "Metadata", negate=TRUE))
+gdp_file <- file_list[1]$Name
+
+# Now, we'll unzip the CSV and read it into a dataframe
+unzip("gdp.zip", files = gdp_file)
+gdp <- read_csv(gdp_file, skip=4)
+
+# Finally, we'll clean up after ourselves
+file.remove(gdp_file)
+file.remove("gdp.zip")
+
+gdp
+```
+## Summarizing
+To tidy up the data, I'll filter just to the relevant years and pivot the data before summarizing it per country, averaging GDP over the timeframe. `Country Code` is going to be my join key, as I grabbed that code earlier from the population data, so I'll keep it in the result set.
+
+```{r tidy_gdp}
+gdp_summary <- gdp %>% 
+  select(
+    c(
+      `Country Code`, 
+      `2020`:`2023`,
+    ),
+  ) %>% 
+  pivot_longer(
+    -c(`Country Code`),
+    names_to = "year",
+    values_to = "gdp",
+  ) %>% 
+  drop_na() %>% 
+  rename(
+    Country_Code = `Country Code`,
+  ) %>% 
+  group_by(
+    Country_Code,
+  ) %>% 
+  summarise(
+    mean_gdp = mean(gdp),
+  ) %>% 
+  ungroup()
+
+gdp_summary
+```
+Now, I will join GDP into the global summary data, producing a new data set that includes cases, deaths, Population, and mean GDP. This is what I will use for further analysis.
+
+```{r add_gdp_to_global, message=FALSE}
+global_summary <- global %>% 
+  group_by(Country_Code, date) %>% 
+  summarise(across(c(cases, deaths, Population), sum)) %>% 
+  group_by(Country_Code) %>% 
+  summarise(across(c(cases, deaths, Population), max)) %>% 
+  ungroup()
+
+global_summary
+
+global_gdp_cases <- global_summary %>% 
+  inner_join(gdp_summary)
+
+global_gdp_cases
+```
+## Analysis and Modeling
+In order to put nations on something of an even ground, we'll normalize the data by looking at cases, deaths, and mean_gdp per 1000 people in the population.
+
+```{r normalize_metrics}
+global_gdp_cases <- global_gdp_cases %>% 
+  mutate(
+    cases_per_thou = cases * 1000 / Population,
+    deaths_per_thou = deaths * 1000 / Population,
+    gdp_per_thou = mean_gdp * 1000 / Population,
+  ) %>% 
+  select(
+    Country_Code,
+    Population,
+    everything(),
+  ) %>% 
+  drop_na()
+
+global_gdp_cases
+```
+I'll quickly visualize this to see if there's a discernible pattern.
+
+```{r visualize_cases_v_gdp, warning=FALSE}
+
+global_gdp_cases %>% 
+  ggplot(
+    aes(gdp_per_thou, cases_per_thou)
+  ) +
+  geom_point() +
+  scale_x_continuous(labels = scales::label_number(scale = 0.00001, suffix = "M")) +
+  labs(
+    title = "COVID19 Cases by GDP",
+    x = "GDP (Millions) per 1K citizens",
+    y = "Cases per 1K citizens",
+  )
+
+```
+Generally, it does appear that the higher a nation's GDP, the more cases it has per 1000 citizens. I'll note, though, that may be more a factor of how a nation's GDP is a function of its population.
+
+Now, we'll apply a linear model looking at cases_per_thou as a function of gdp_per_thou. We'll add that to our data set, and chart it.
+```{r model_cases_v_gdp}
+gdp_mod <- lm(cases_per_thou ~ gdp_per_thou, data = global_gdp_cases)
+
+summary(gdp_mod)
+
+global_gdp_cases <- global_gdp_cases %>% 
+  mutate(
+    pred_cases = predict(gdp_mod),
+  )
+
+global_gdp_cases
+
+global_gdp_cases %>% 
+  ggplot() +
+  geom_point(
+    aes(x = gdp_per_thou, y = cases_per_thou),
+    color = "blue",
+  ) +
+  geom_point(
+    aes(x = gdp_per_thou, y = pred_cases),
+    color = "red",
+  )
+```
+The linear model does a fairly decent job predicting cases. 
+
+I'm curious whether a similar or stronger correlation exists between GDP and deaths.
+
+```{r deaths_as_function_of_gdp}
+mod_deaths_gdp <- lm(deaths_per_thou ~ gdp_per_thou, data = global_gdp_cases)
+
+summary(mod_deaths_gdp)
+
+global_gdp_cases <- global_gdp_cases %>% 
+  mutate(
+    pred_deaths = predict(mod_deaths_gdp),
+  )
+
+global_gdp_cases
+
+
+global_gdp_cases %>% 
+  ggplot() +
+  geom_point(
+    aes(x = gdp_per_thou, y = deaths_per_thou),
+    color = "blue",
+  ) +
+  geom_point(
+    aes(x = gdp_per_thou, y = pred_deaths),
+    color = "red",
+  )
+```
+The correlation here does not look quite as strong as with cases. On the low end, for "poorer countries", deaths per thousand can be very high, even when cases are not. This suggests that poor countries probably do not fare as well with _treating_ COVID as wealthier countries do.
+
+Let's see whether GDP might predict the likelihood of surviving COVID19. For an indicator of survival, I'll introduce a metric, `deaths_per_1k_cases`. I'll then model this as a function of GDP an chart the result.
+
+```{r gdp_driving_deaths_per_1k_cases}
+global_gdp_cases <- global_gdp_cases %>%
+  mutate(
+    deaths_per_1k_cases = deaths * 1000 / cases,
+  )
+
+global_gdp_cases %>% select(deaths_per_1k_cases, everything())
+
+mod_gdp_deaths_per_cases = lm(deaths_per_1k_cases ~ gdp_per_thou, data = global_gdp_cases)
+
+summary(mod_gdp_deaths_per_cases)
+
+global_gdp_cases <- global_gdp_cases %>% 
+  mutate(
+    pred_deaths_per_1k_cases = predict(mod_gdp_deaths_per_cases),
+  )
+
+global_gdp_cases %>% select(deaths_per_1k_cases, pred_deaths_per_1k_cases, everything())
+
+global_gdp_cases %>% 
+  ggplot() +
+  geom_point(
+    aes(x = gdp_per_thou, y = deaths_per_1k_cases),
+    color = "blue",
+  ) +
+  geom_point(
+    aes(x = gdp_per_thou, y = pred_deaths_per_1k_cases),
+    color = "red",
+  )
+```
+And now we see a very strong correlation. What we see is that the wealthier a country is, the less likely you are to die from COVID if you've caught it.
+
+# Final Thoughts
+My analysis addressed the question: is there a correlation between the wealth of a nation and the number of cases & deaths it experienced as a result of COVID?
+
+The short answer is: Yes. The data show that a nation's wealth had a strong impact on the likelihood of surviving COVID. If you lived in a more impoverished country and were infected by COVID19, you were more likely to die than had you lived in a wealthier country.
+
+Having said that, there are some factors that could bias the data. First, GDP may not be the best indicator of a nation's wealth, particularly for nations where there is significant class dispairty. It is possible that one portion of a nation is largley impoverished while a smaller portion is very wealthy. In such a case, the nation might appear to be wealthy as a whole but still have been ravaged by COVID19 in the more impoverished parts of the nation. 
+
+Second, the timing of COVID19 could skew results. COVID19 did not attack all nations at the same time. Nations that encountered COVID19 later could draw on the experience of nations that had encountered it earlier to help combat the disease more effectively. For example, if we consider two nations, nation A and nation B, with roughly similar demographics in terms of population and national wealth, if nation A encountered COVID19 before vaccines and treatments were broadly available while nation B encountered it afterward, they would likely have had two very different outcomes.
+
+Third, this data set looks only at those nations where population and GDP are available. It might miss some nations that have demonstrably different outcomes, but where data was not available. It also relies on nations to report accurate numbers about COVID19 cases and deaths. In a competitive geopolitical world, some nations might under-report data in order to hide information from their own citizens. Other nations might also have underreported simply because they lacked the ability to capture good information.
+
+In the end, I believe this data provides fair support for the premise that wealthier nations fared better with respect to COVID19.
